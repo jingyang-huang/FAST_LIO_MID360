@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.0.2)
 project(fast_lio)
 
-SET(CMAKE_BUILD_TYPE "Debug")
+SET(CMAKE_BUILD_TYPE "Release")
 
 ADD_COMPILE_OPTIONS(-std=c++14 )
 ADD_COMPILE_OPTIONS(-std=c++14 )
@@ -60,8 +60,8 @@ find_package(catkin REQUIRED COMPONENTS
 
 set(PCL_DIR "/usr/lib/x86_64-linux-gnu/cmake/pcl")
 find_package(Eigen3 REQUIRED)
-find_package(PCL 1.8 REQUIRED)
-set(PCL_INCLUDE_DIRS /usr/include/pcl-1.8)
+find_package(PCL REQUIRED)
+# set(PCL_INCLUDE_DIRS /usr/include/pcl-1.8)
 
 message(Eigen: ${EIGEN3_INCLUDE_DIR})
 

@@ -108,7 +108,7 @@ bool point_selected_surf[100000] = {0};
 bool lidar_pushed, flg_first_scan = true, flg_exit = false, flg_EKF_inited, deskew_enabled = true;
 bool scan_pub_en = false, dense_pub_en = false, scan_body_pub_en = false;
 double keyframe_dist = 1.0, keyframe_rot = 0.0, keyframe_time = 0.0;
-const int FEATS_WINDOW_SIZE = 100;
+const int FEATS_WINDOW_SIZE = 40;
 
 vector<vector<int>> pointSearchInd_surf;
 vector<BoxPointType> cub_needrm;
@@ -578,7 +578,7 @@ void map_incremental()
     {
         PointVector feats_window = feats_window_buffer.front();
         feats_window_buffer.pop_front();
-        ikdtree_localmap.Delete_Points(feats_window); 
+        ikdtree_localmap.Delete_Points(feats_window);
     }
 
     double st_time = omp_get_wtime();
@@ -1011,8 +1011,8 @@ int main(int argc, char **argv)
 
     memset(point_selected_surf, true, sizeof(point_selected_surf));
     memset(res_last, -1000.0f, sizeof(res_last));
-    downSizeFilterSurf.setLeafSize(filter_size_surf_min, filter_size_surf_min, filter_size_surf_min);
-    downSizeFilterMap.setLeafSize(filter_size_map_min, filter_size_map_min, filter_size_map_min);
+    downSizeFilterSurf.setLeafSize(filter_size_surf_min, filter_size_surf_min, filter_size_surf_min); // 这个是定位的时候用的
+    downSizeFilterMap.setLeafSize(filter_size_map_min, filter_size_map_min, filter_size_map_min);     // 好像没什么用
     memset(point_selected_surf, true, sizeof(point_selected_surf));
     memset(res_last, -1000.0f, sizeof(res_last));
 
@@ -1115,13 +1115,13 @@ int main(int argc, char **argv)
                 if (feats_down_size > 5)
                 {
                     ikdtree.set_downsample_param(filter_size_map_min);
-                    ikdtree_localmap.set_downsample_param(filter_size_map_min);
+                    ikdtree_localmap.set_downsample_param(filter_size_map_min); // localmap指定0.1更细致
                     feats_down_world->resize(feats_down_size);
                     for (int i = 0; i < feats_down_size; i++)
                     {
                         pointBodyToWorld(&(feats_down_body->points[i]), &(feats_down_world->points[i]));
                     }
-                    feats_window_buffer.push_back(feats_down_world->points);//后面buffer满了还是要去掉
+                    feats_window_buffer.push_back(feats_down_world->points); // 后面buffer满了还是要去掉
 
                     ikdtree.Build(feats_down_world->points);
                     ikdtree_localmap.Build(feats_down_world->points);
@@ -1149,11 +1149,6 @@ int main(int argc, char **argv)
 
             if (1) // If you need to see map point, change to "if(1)"
             {
-                PointVector().swap(ikdtree.PCL_Storage);
-                ikdtree.flatten(ikdtree.Root_Node, ikdtree.PCL_Storage, NOT_RECORD);
-                featsFromMap->clear();
-                featsFromMap->points = ikdtree.PCL_Storage;
-
                 PointVector().swap(ikdtree_localmap.PCL_Storage);
                 ikdtree_localmap.flatten(ikdtree_localmap.Root_Node, ikdtree_localmap.PCL_Storage, NOT_RECORD);
                 featsLocalMap->clear();
@@ -1208,9 +1203,9 @@ int main(int argc, char **argv)
                 publish_frame_world(pubLaserCloudFull);
             if (scan_pub_en && scan_body_pub_en)
                 publish_frame_body(pubLaserCloudFull_body);
-            publish_effect_world(pubLaserCloudEffect);
-            publish_deskew_local(pubLaserCloudDeskew);
-            publish_map(pubLaserCloudMap);
+            // publish_effect_world(pubLaserCloudEffect);
+            // publish_deskew_local(pubLaserCloudDeskew);
+            // publish_map(pubLaserCloudMap);
             publish_localmap(pubLaserLocalMap);
 
             /*** Debug variables ***/
@@ -1260,13 +1255,36 @@ int main(int argc, char **argv)
     //        cout << "current scan saved to /PCD/" << file_name<<endl;
     //        pcd_writer.writeBinary(all_points_dir, *pcl_wait_save);
     //    }
-    if (pcl_wait_save_rgb->size() > 0 && pcd_save_en)
+
+    // if (pcl_wait_save_rgb->size() > 0 && pcd_save_en)
+    // {
+    //     string file_name = string("scans.pcd");
+    //     string all_points_dir(string(string(ROOT_DIR) + "PCD/") + file_name);
+    //     pcl::PCDWriter pcd_writer;
+    //     cout << "current scan saved to /PCD/" << file_name << endl;
+    //     pcd_writer.writeBinary(all_points_dir, *pcl_wait_save_rgb);
+    // }
+
+    if (1)
     {
-        string file_name = string("scans.pcd");
+        // 最后保存一次global map
+        PointVector().swap(ikdtree.PCL_Storage);
+        ikdtree.flatten(ikdtree.Root_Node, ikdtree.PCL_Storage, NOT_RECORD);
+        featsFromMap->clear();
+        featsFromMap->points = ikdtree.PCL_Storage;
+        
+        string file_name = string("map_bin.pcd");
         string all_points_dir(string(string(ROOT_DIR) + "PCD/") + file_name);
         pcl::PCDWriter pcd_writer;
-        cout << "current scan saved to /PCD/" << file_name << endl;
-        pcd_writer.writeBinary(all_points_dir, *pcl_wait_save_rgb);
+        cout << "final bin map saved to /PCD/" << file_name << endl;
+        pcd_writer.writeBinary(all_points_dir, *featsFromMap);
+
+        file_name = string("map_ascii.pcd");
+        all_points_dir = (string(string(ROOT_DIR) + "PCD/") + file_name);
+        cout << "final txt map saved to /PCD/" << file_name << endl;
+        featsFromMap->height = 1;
+        featsFromMap->width = featsFromMap->size();
+        pcd_writer.writeASCII(all_points_dir, *featsFromMap);
     }
 
     fout_out.close();

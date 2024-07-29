@@ -34,7 +34,7 @@ Panels:
   - Class: rviz/Time
     Name: Time
     SyncMode: 0
-    SyncSource: Image
+    SyncSource: LocalMap
 Preferences:
   PromptSaveOnExit: true
 Toolbars:
@@ -176,7 +176,7 @@ Visualization Manager:
           Queue Size: 10
           Selectable: true
           Size (Pixels): 3
-          Size (m): 0.10000000149011612
+          Size (m): 0.5
           Style: Flat Squares
           Topic: /mapping/Local_map
           Unreliable: false
@@ -305,7 +305,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz/Orbit
-      Distance: 157.6803436279297
+      Distance: 208.3253631591797
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -313,17 +313,17 @@ Visualization Manager:
         Value: false
       Field of View: 0.7853981852531433
       Focal Point:
-        X: 36.129146575927734
-        Y: 6.019369125366211
-        Z: 12.569282531738281
+        X: 73.21800994873047
+        Y: -13.095417022705078
+        Z: 23.674222946166992
       Focal Shape Fixed Size: false
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 1.2353978157043457
+      Pitch: 1.2903977632522583
       Target Frame: camera_init
-      Yaw: 3.0953965187072754
+      Yaw: 3.090395927429199
     Saved:
       - Class: rviz/ThirdPersonFollower
         Distance: 10
@@ -364,4 +364,4 @@ Window Geometry:
     collapsed: true
   Width: 1414
   X: 498
-  Y: 27
+  Y: 0

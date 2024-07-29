@@ -18,7 +18,7 @@ mapping:
     b_acc_cov: 0.0001
     b_gyr_cov: 0.0001
     fov_degree:    360
-    det_range:     100.0
+    det_range:     150.0
     extrinsic_est_en:  false      # true: enable the online estimation of IMU-LiDAR extrinsic
     extrinsic_T: [ -0.010, 0, 0.060 ]
     extrinsic_R: [ 0,  0.9659258,  0.2588190,    
@@ -30,7 +30,7 @@ publish:
     scan_publish_en:  true       # false: close all the point cloud output
     dense_publish_en: false       # false: low down the points number in a global-frame point clouds scan.
     scan_bodyframe_pub_en: true  # true: output the point cloud scans in IMU-body-frame
-    lins_result_path: "/home/ubuntu/Documents/dataplace/huzhou/OdomGT/v3_gt.txt"
+    lins_result_path: "/home/ubuntu/Documents/dataplace/huzhou/OdomGT/test_gt.txt"
 pcd_save:
     pcd_save_en: false
     interval: -1                 # how many LiDAR frames saved in each pcd file; 

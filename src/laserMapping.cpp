@@ -108,7 +108,7 @@ bool point_selected_surf[100000] = {0};
 bool lidar_pushed, flg_first_scan = true, flg_exit = false, flg_EKF_inited, deskew_enabled = true;
 bool scan_pub_en = false, dense_pub_en = false, scan_body_pub_en = false;
 double keyframe_dist = 1.0, keyframe_rot = 0.0, keyframe_time = 0.0;
-const int FEATS_WINDOW_SIZE = 40;
+const int FEATS_WINDOW_SIZE = 30;
 
 vector<vector<int>> pointSearchInd_surf;
 vector<BoxPointType> cub_needrm;
@@ -119,9 +119,11 @@ deque<double> time_buffer;
 deque<PointCloudXYZI::Ptr> lidar_buffer;
 deque<sensor_msgs::Imu::ConstPtr> imu_buffer;
 deque<PointVector> feats_window_buffer;
+deque<PointVector> feats_window_buffer2;
+deque<std::vector<BoxPointType>> box_needrm_window_buffer;
 
 PointCloudXYZI::Ptr featsFromMap(new PointCloudXYZI());
-PointCloudXYZI::Ptr featsLocalMap(new PointCloudXYZI());
+PointCloudXYZI::Ptr featsSubMap(new PointCloudXYZI());
 PointCloudXYZI::Ptr feats_undistort(new PointCloudXYZI());
 PointCloudXYZI::Ptr feats_down_body(new PointCloudXYZI());
 PointCloudXYZI::Ptr feats_down_world(new PointCloudXYZI());
@@ -134,7 +136,7 @@ pcl::VoxelGrid<PointType> downSizeFilterSurf;
 pcl::VoxelGrid<PointType> downSizeFilterMap;
 
 KD_TREE<PointType> ikdtree;
-KD_TREE<PointType> ikdtree_localmap;
+KD_TREE<PointType> ikdtree_submap;
 
 V3F XAxisPoint_body(LIDAR_SP_LEN, 0.0, 0.0);
 V3F XAxisPoint_world(LIDAR_SP_LEN, 0.0, 0.0);
@@ -298,17 +300,21 @@ void points_cache_collect()
     // for (int i = 0; i < points_history.size(); i++) _featsArray->push_back(points_history[i]);
 }
 
-BoxPointType LocalMap_Points;
-bool Localmap_Initialized = false;
+// 在拿到eskf前馈结果后，动态调整地图区域，防止地图过大而内存溢出，类似LOAM中提取局部地图的方法
+BoxPointType LocalMap_Points;      // ikd-tree中,局部地图的包围盒角点
+bool Localmap_Initialized = false; // 局部地图是否初始化
 void lasermap_fov_segment()
 {
-    cub_needrm.clear();
+    cub_needrm.clear(); // 清空需要移除的区域
     kdtree_delete_counter = 0;
     kdtree_delete_time = 0.0;
+    // X轴分界点转换到w系下，好像没有用到
     pointBodyToWorld(XAxisPoint_body, XAxisPoint_world);
+    // global系下lidar位置
     V3D pos_LiD = pos_lid;
+    // 初始化局部地图包围盒角点，以为w系下lidar位置为中心,得到长宽高200*200*200的局部地图
     if (!Localmap_Initialized)
-    {
+    { // 系统起始需要初始化局部地图的大小和位置
         for (int i = 0; i < 3; i++)
         {
             LocalMap_Points.vertex_min[i] = pos_LiD(i) - cube_len / 2.0;
@@ -317,29 +323,36 @@ void lasermap_fov_segment()
         Localmap_Initialized = true;
         return;
     }
+    // 各个方向上Lidar与局部地图边界的距离，或者说是lidar与立方体盒子六个面的距离
     float dist_to_map_edge[3][2];
     bool need_move = false;
+    // 当前雷达系中心到各个地图边缘的距离
     for (int i = 0; i < 3; i++)
     {
         dist_to_map_edge[i][0] = fabs(pos_LiD(i) - LocalMap_Points.vertex_min[i]);
         dist_to_map_edge[i][1] = fabs(pos_LiD(i) - LocalMap_Points.vertex_max[i]);
+        // 与某个方向上的边界距离（例如1.5*300m）太小，标记需要移除need_move，参考论文Fig3
         if (dist_to_map_edge[i][0] <= MOV_THRESHOLD * DET_RANGE || dist_to_map_edge[i][1] <= MOV_THRESHOLD * DET_RANGE)
             need_move = true;
     }
+    // 不需要挪动就直接退回了
     if (!need_move)
         return;
+    // 否则需要计算移动的距离
     BoxPointType New_LocalMap_Points, tmp_boxpoints;
+    // 新的局部地图盒子边界点
     New_LocalMap_Points = LocalMap_Points;
     float mov_dist = max((cube_len - 2.0 * MOV_THRESHOLD * DET_RANGE) * 0.5 * 0.9, double(DET_RANGE * (MOV_THRESHOLD - 1)));
     for (int i = 0; i < 3; i++)
     {
         tmp_boxpoints = LocalMap_Points;
+        // 与包围盒最小值边界点距离
         if (dist_to_map_edge[i][0] <= MOV_THRESHOLD * DET_RANGE)
         {
             New_LocalMap_Points.vertex_max[i] -= mov_dist;
             New_LocalMap_Points.vertex_min[i] -= mov_dist;
             tmp_boxpoints.vertex_min[i] = LocalMap_Points.vertex_max[i] - mov_dist;
-            cub_needrm.push_back(tmp_boxpoints);
+            cub_needrm.push_back(tmp_boxpoints); // 移除较远包围盒
         }
         else if (dist_to_map_edge[i][1] <= MOV_THRESHOLD * DET_RANGE)
         {
@@ -353,6 +366,7 @@ void lasermap_fov_segment()
 
     points_cache_collect();
     double delete_begin = omp_get_wtime();
+    // 使用Boxs删除指定盒内的点
     if (cub_needrm.size() > 0)
         kdtree_delete_counter = ikdtree.Delete_Point_Boxes(cub_needrm);
     kdtree_delete_time = omp_get_wtime() - delete_begin;
@@ -521,36 +535,53 @@ bool sync_packages(MeasureGroup &meas)
 int process_increments = 0;
 void map_incremental()
 {
-    PointVector PointToAdd;
-    PointVector PointNoNeedDownsample;
+    PointVector PointToAdd;            // 需要加入到ikd-tree中的点云
+    PointVector PointNoNeedDownsample; // 加入ikd-tree时，不需要降采样的点云
     PointVector PointForLocalmap;
-    PointToAdd.reserve(feats_down_size);
-    PointNoNeedDownsample.reserve(feats_down_size);
+    std::vector<BoxPointType> box_needrm;
+    PointToAdd.reserve(feats_down_size);            // 构建的地图点
+    PointNoNeedDownsample.reserve(feats_down_size); // 构建的地图点，不需要降采样的点云
     PointForLocalmap.reserve(feats_down_size);
+    // 根据点与所在包围盒中心点的距离，分类是否需要降采样
     for (int i = 0; i < feats_down_size; i++)
     {
-        /* transform to world frame */
+        // 转换到世界坐标系下
         pointBodyToWorld(&(feats_down_body->points[i]), &(feats_down_world->points[i]));
-        /* decide if need add to map */
+        // 判断是否有关键点需要加到地图中
         if (!Nearest_Points[i].empty() && flg_EKF_inited)
         {
-            const PointVector &points_near = Nearest_Points[i];
-            bool need_add = true;
-            BoxPointType Box_of_Point;
-            PointType downsample_result, mid_point;
+            const PointVector &points_near = Nearest_Points[i]; // 获取附近的点云
+            bool need_add = true;                               // 是否需要加入到地图中
+            BoxPointType Box_of_Point;                          // 点云所在的包围盒
+            PointType downsample_result, mid_point;             // 降采样结果，中点
+            // 计算该点所属的体素
+            Box_of_Point.vertex_min[0] = floor(feats_down_world->points[i].x / filter_size_map_min) * filter_size_map_min;
+            Box_of_Point.vertex_max[0] = Box_of_Point.vertex_min[0] + filter_size_map_min;
+            Box_of_Point.vertex_min[1] = floor(feats_down_world->points[i].y / filter_size_map_min) * filter_size_map_min;
+            Box_of_Point.vertex_max[1] = Box_of_Point.vertex_min[1] + filter_size_map_min;
+            Box_of_Point.vertex_min[2] = floor(feats_down_world->points[i].z / filter_size_map_min) * filter_size_map_min;
+            Box_of_Point.vertex_max[2] = Box_of_Point.vertex_min[2] + filter_size_map_min;
+            box_needrm.push_back(Box_of_Point);
+            // filter_size_map_min是地图体素降采样的栅格边长，设为0.1m
+            // mid_point即为该特征点所属的栅格的中心点坐标
             mid_point.x = floor(feats_down_world->points[i].x / filter_size_map_min) * filter_size_map_min + 0.5 * filter_size_map_min;
             mid_point.y = floor(feats_down_world->points[i].y / filter_size_map_min) * filter_size_map_min + 0.5 * filter_size_map_min;
             mid_point.z = floor(feats_down_world->points[i].z / filter_size_map_min) * filter_size_map_min + 0.5 * filter_size_map_min;
+            // 当前点与box中心的距离
             float dist = calc_dist(feats_down_world->points[i], mid_point);
+            // 判断最近点在x、y、z三个方向上，与中心的距离，判断是否加入时需要降采样
             if (fabs(points_near[0].x - mid_point.x) > 0.5 * filter_size_map_min && fabs(points_near[0].y - mid_point.y) > 0.5 * filter_size_map_min && fabs(points_near[0].z - mid_point.z) > 0.5 * filter_size_map_min)
             {
+                // 若三个方向距离都大于地图栅格半轴长，无需降采样
                 PointNoNeedDownsample.push_back(feats_down_world->points[i]);
                 continue;
             }
+            // 判断当前点的 NUM_MATCH_POINTS 个邻近点 与包围盒中心的范围
             for (int readd_i = 0; readd_i < NUM_MATCH_POINTS; readd_i++)
             {
-                if (points_near.size() < NUM_MATCH_POINTS)
+                if (points_near.size() < NUM_MATCH_POINTS) // 若邻近点数小于NUM_MATCH_POINTS，则直接跳出，添加到PointToAdd中
                     break;
+                // 如果存在邻近点到中心的距离小于当前点到中心的距离，则不需要添加当前点
                 if (calc_dist(points_near[readd_i], mid_point) < dist)
                 {
                     need_add = false;
@@ -558,28 +589,36 @@ void map_incremental()
                 }
             }
             if (need_add)
-                PointToAdd.push_back(feats_down_world->points[i]);
+                PointToAdd.push_back(feats_down_world->points[i]); // 加入到PointToAdd中
         }
         else
         {
-            PointToAdd.push_back(feats_down_world->points[i]);
+            PointToAdd.push_back(feats_down_world->points[i]); // 如果周围没有点或者没有初始化EKF，则加入到PointToAdd中
         }
     }
 
     //... vec1,vec2赋值
-    PointForLocalmap.insert(PointForLocalmap.end(), PointToAdd.begin(), PointToAdd.end());
+    PointForLocalmap = PointToAdd;
     PointForLocalmap.insert(PointForLocalmap.end(), PointNoNeedDownsample.begin(), PointNoNeedDownsample.end());
 
+    box_needrm_window_buffer.push_back(box_needrm);
     // window incremental
     feats_window_buffer.push_back(PointForLocalmap);
-    add_point_size = ikdtree_localmap.Add_Points(PointToAdd, true);
-    ikdtree_localmap.Add_Points(PointNoNeedDownsample, false);
+    std::cout << "PointToAddsize: " << PointToAdd.size() << " PointNoNeedDownsamplesize: " << PointNoNeedDownsample.size() << std::endl;
     if (feats_window_buffer.size() > FEATS_WINDOW_SIZE)
     {
-        PointVector feats_window = feats_window_buffer.front();
+        PointVector feats_needrm = feats_window_buffer.front();
         feats_window_buffer.pop_front();
-        ikdtree_localmap.Delete_Points(feats_window);
+        std::vector<BoxPointType> box_needrm = box_needrm_window_buffer.front();
+        box_needrm_window_buffer.pop_front();
+        std::cout << "box_needrm size: " << box_needrm.size() << std::endl;
+        ikdtree_submap.Delete_Point_Boxes(box_needrm);
+
+        ikdtree_submap.Delete_Points(feats_needrm);
     }
+
+    add_point_size = ikdtree_submap.Add_Points(PointToAdd, true);
+    ikdtree_submap.Add_Points(PointNoNeedDownsample, false);
 
     double st_time = omp_get_wtime();
     add_point_size = ikdtree.Add_Points(PointToAdd, true);
@@ -720,13 +759,13 @@ void publish_map(const ros::Publisher &pubLaserCloudMap)
     pubLaserCloudMap.publish(laserCloudMap);
 }
 
-void publish_localmap(const ros::Publisher &pubLaserLocalMap)
+void publish_submap(const ros::Publisher &pubLaserSubMap)
 {
     sensor_msgs::PointCloud2 laserCloudMap;
-    pcl::toROSMsg(*featsLocalMap, laserCloudMap);
+    pcl::toROSMsg(*featsSubMap, laserCloudMap);
     laserCloudMap.header.stamp = ros::Time().fromSec(lidar_end_time);
     laserCloudMap.header.frame_id = odom_frame;
-    pubLaserLocalMap.publish(laserCloudMap);
+    pubLaserSubMap.publish(laserCloudMap);
 }
 
 template <typename T>
@@ -1018,7 +1057,7 @@ int main(int argc, char **argv)
 
     Lidar_T_wrt_IMU << VEC_FROM_ARRAY(extrinT);
     Lidar_R_wrt_IMU << MAT_FROM_ARRAY(extrinR);
-    p_imu->set_deskew(deskew_enabled);
+    // p_imu->set_deskew(deskew_enabled);
     p_imu->set_extrinsic(Lidar_T_wrt_IMU, Lidar_R_wrt_IMU);
     p_imu->set_gyr_cov(V3D(gyr_cov, gyr_cov, gyr_cov));
     p_imu->set_acc_cov(V3D(acc_cov, acc_cov, acc_cov));
@@ -1055,7 +1094,7 @@ int main(int argc, char **argv)
     ros::Publisher pubLaserCloudEffect = nh.advertise<sensor_msgs::PointCloud2>("mapping/cloud_effected", 100000);
     ros::Publisher pubLaserCloudDeskew = nh.advertise<sensor_msgs::PointCloud2>(cloud_deskewed_topic, 100000);
     ros::Publisher pubLaserCloudMap = nh.advertise<sensor_msgs::PointCloud2>("mapping/Laser_map", 100000);
-    ros::Publisher pubLaserLocalMap = nh.advertise<sensor_msgs::PointCloud2>("mapping/Local_map", 100000);
+    ros::Publisher pubLaserSubMap = nh.advertise<sensor_msgs::PointCloud2>("mapping/Local_map", 100000);
     ros::Publisher pubOdomAftMapped = nh.advertise<nav_msgs::Odometry>(odometry_topic, 100000);
     ros::Publisher pubKeyframePose = nh.advertise<nav_msgs::Odometry>("mapping/keyframe_pose", 100000);
 
@@ -1115,7 +1154,7 @@ int main(int argc, char **argv)
                 if (feats_down_size > 5)
                 {
                     ikdtree.set_downsample_param(filter_size_map_min);
-                    ikdtree_localmap.set_downsample_param(filter_size_map_min); // localmap指定0.1更细致
+                    ikdtree_submap.set_downsample_param(filter_size_map_min); // submap指定0.1更细致
                     feats_down_world->resize(feats_down_size);
                     for (int i = 0; i < feats_down_size; i++)
                     {
@@ -1124,7 +1163,7 @@ int main(int argc, char **argv)
                     feats_window_buffer.push_back(feats_down_world->points); // 后面buffer满了还是要去掉
 
                     ikdtree.Build(feats_down_world->points);
-                    ikdtree_localmap.Build(feats_down_world->points);
+                    ikdtree_submap.Build(feats_down_world->points);
                 }
                 continue;
             }
@@ -1149,10 +1188,10 @@ int main(int argc, char **argv)
 
             if (1) // If you need to see map point, change to "if(1)"
             {
-                PointVector().swap(ikdtree_localmap.PCL_Storage);
-                ikdtree_localmap.flatten(ikdtree_localmap.Root_Node, ikdtree_localmap.PCL_Storage, NOT_RECORD);
-                featsLocalMap->clear();
-                featsLocalMap->points = ikdtree_localmap.PCL_Storage;
+                PointVector().swap(ikdtree_submap.PCL_Storage);
+                ikdtree_submap.flatten(ikdtree_submap.Root_Node, ikdtree_submap.PCL_Storage, NOT_RECORD);
+                featsSubMap->clear();
+                featsSubMap->points = ikdtree_submap.PCL_Storage;
             }
 
             pointSearchInd_surf.resize(feats_down_size);
@@ -1206,7 +1245,7 @@ int main(int argc, char **argv)
             // publish_effect_world(pubLaserCloudEffect);
             // publish_deskew_local(pubLaserCloudDeskew);
             // publish_map(pubLaserCloudMap);
-            publish_localmap(pubLaserLocalMap);
+            publish_submap(pubLaserSubMap);
 
             /*** Debug variables ***/
             if (runtime_pos_log)
@@ -1272,19 +1311,19 @@ int main(int argc, char **argv)
         ikdtree.flatten(ikdtree.Root_Node, ikdtree.PCL_Storage, NOT_RECORD);
         featsFromMap->clear();
         featsFromMap->points = ikdtree.PCL_Storage;
-        
+
         string file_name = string("map_bin.pcd");
         string all_points_dir(string(string(ROOT_DIR) + "PCD/") + file_name);
         pcl::PCDWriter pcd_writer;
         cout << "final bin map saved to /PCD/" << file_name << endl;
         pcd_writer.writeBinary(all_points_dir, *featsFromMap);
 
-        file_name = string("map_ascii.pcd");
-        all_points_dir = (string(string(ROOT_DIR) + "PCD/") + file_name);
-        cout << "final txt map saved to /PCD/" << file_name << endl;
-        featsFromMap->height = 1;
-        featsFromMap->width = featsFromMap->size();
-        pcd_writer.writeASCII(all_points_dir, *featsFromMap);
+        // file_name = string("map_ascii.pcd");
+        // all_points_dir = (string(string(ROOT_DIR) + "PCD/") + file_name);
+        // cout << "final txt map saved to /PCD/" << file_name << endl;
+        // featsFromMap->height = 1;
+        // featsFromMap->width = featsFromMap->size();
+        // pcd_writer.writeASCII(all_points_dir, *featsFromMap);
     }
 
     fout_out.close();

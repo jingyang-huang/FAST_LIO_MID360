@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.0.2)
 project(fast_lio)
 
-SET(CMAKE_BUILD_TYPE "Release")
+SET(CMAKE_BUILD_TYPE "Debug")
 
 ADD_COMPILE_OPTIONS(-std=c++14 )
 ADD_COMPILE_OPTIONS(-std=c++14 )

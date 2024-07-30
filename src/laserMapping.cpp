@@ -601,37 +601,37 @@ void map_incremental()
         }
     }
 
-    double start_time = omp_get_wtime();
-    //... vec1,vec2赋值
-    PointForLocalmap = PointToAdd;
-    PointForLocalmap.insert(PointForLocalmap.end(), PointNoNeedDownsample.begin(), PointNoNeedDownsample.end());
+    // double start_time = omp_get_wtime();
+    // //... vec1,vec2赋值
+    // PointForLocalmap = PointToAdd;
+    // PointForLocalmap.insert(PointForLocalmap.end(), PointNoNeedDownsample.begin(), PointNoNeedDownsample.end());
 
-    box_needrm_window_buffer.push_back(box_needrm);
-    // window incremental
-    feats_window_buffer.push_back(PointForLocalmap);
-    // std::cout << "PointToAddsize: " << PointToAdd.size() << " PointNoNeedDownsamplesize: " << PointNoNeedDownsample.size() << std::endl;
-    if (feats_window_buffer.size() > FEATS_WINDOW_SIZE)
-    {
-        PointVector feats_needrm = feats_window_buffer.front();
-        feats_window_buffer.pop_front();
-        std::vector<BoxPointType> box_needrm = box_needrm_window_buffer.front();
-        box_needrm_window_buffer.pop_front();
-        // std::cout << "box_needrm size: " << box_needrm.size() << std::endl;
-        ikdtree_submap.Delete_Point_Boxes(box_needrm);
-        ikdtree_submap.Delete_Points(feats_needrm);
-    }
+    // box_needrm_window_buffer.push_back(box_needrm);
+    // // window incremental
+    // feats_window_buffer.push_back(PointForLocalmap);
+    // // std::cout << "PointToAddsize: " << PointToAdd.size() << " PointNoNeedDownsamplesize: " << PointNoNeedDownsample.size() << std::endl;
+    // if (feats_window_buffer.size() > FEATS_WINDOW_SIZE)
+    // {
+    //     PointVector feats_needrm = feats_window_buffer.front();
+    //     feats_window_buffer.pop_front();
+    //     std::vector<BoxPointType> box_needrm = box_needrm_window_buffer.front();
+    //     box_needrm_window_buffer.pop_front();
+    //     // std::cout << "box_needrm size: " << box_needrm.size() << std::endl;
+    //     ikdtree_submap.Delete_Point_Boxes(box_needrm);
+    //     ikdtree_submap.Delete_Points(feats_needrm);
+    // }
 
-    add_point_size = ikdtree_submap.Add_Points(PointToAdd, true);
-    ikdtree_submap.Add_Points(PointNoNeedDownsample, false);
+    // add_point_size = ikdtree_submap.Add_Points(PointToAdd, true);
+    // ikdtree_submap.Add_Points(PointNoNeedDownsample, false);
 
-    // retrieve ikdtree submap
-    PointVector().swap(ikdtree_submap.PCL_Storage);
-    ikdtree_submap.flatten(ikdtree_submap.Root_Node, ikdtree_submap.PCL_Storage, NOT_RECORD);
-    featsSubMap->clear();
-    featsSubMap->points = ikdtree_submap.PCL_Storage;
+    // // retrieve ikdtree submap
+    // PointVector().swap(ikdtree_submap.PCL_Storage);
+    // ikdtree_submap.flatten(ikdtree_submap.Root_Node, ikdtree_submap.PCL_Storage, NOT_RECORD);
+    // featsSubMap->clear();
+    // featsSubMap->points = ikdtree_submap.PCL_Storage;
 
-    double end_time = omp_get_wtime();
-    std::cout << "ikd-tree build submap time: " << end_time - start_time << std::endl;
+    // double end_time = omp_get_wtime();
+    // std::cout << "ikd-tree build submap time: " << end_time - start_time << std::endl;
 
     double st_time = omp_get_wtime();
     add_point_size = ikdtree.Add_Points(PointToAdd, true);
@@ -670,7 +670,7 @@ void publish_frame_world(const ros::Publisher &pubLaserCloudFull)
     // 开始处理的时间
     double start_time = omp_get_wtime();
     // build submap using the sliding window
-    *pcl_wait_save += *laserCloudWorld;
+    *pcl_wait_save += *laserCloudWorld; //这个的分辨率和surf有关，而kd_tree的和map_min有关
     *pcl_submap += *laserCloudWorld;
     // this frame point indices: 0->size
     total_size += size;

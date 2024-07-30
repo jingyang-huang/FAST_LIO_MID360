@@ -14,6 +14,8 @@ typedef pcl::PointXYZINormal PointType;
 typedef pcl::PointXYZRGB PointRgbType;
 typedef pcl::PointCloud<PointType> PointCloudXYZI;
 typedef pcl::PointCloud<PointRgbType> PointCloudXYZRGB;
+// typedef pcl::PointXYZI PointIntensityType;
+// typedef pcl::PointCloud<PointIntensityType> PointCloudXYZIntensity;
 
 enum LID_TYPE{AVIA = 1, VELO16, OUST64}; //{1, 2, 3}
 enum TIME_UNIT{SEC = 0, MS = 1, US = 2, NS = 3};

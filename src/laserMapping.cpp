@@ -52,6 +52,8 @@
 #include <pcl/point_types.h>
 #include <pcl/filters/voxel_grid.h>
 #include <pcl/io/pcd_io.h>
+#include <pcl/filters/voxel_grid.h>
+#include <pcl/filters/extract_indices.h>
 #include <sensor_msgs/PointCloud2.h>
 #include <tf/transform_datatypes.h>
 #include <tf/transform_broadcaster.h>
@@ -280,6 +282,8 @@ void RGBpointBodyToWorld(PointType const *const pi, PointRgbType *const po)
         po->g = 255;
         po->r = 255;
     }
+
+    po->b = pi->intensity;
 }
 
 void RGBpointBodyLidarToIMU(PointType const *const pi, PointType *const po)
@@ -597,6 +601,7 @@ void map_incremental()
         }
     }
 
+    double start_time = omp_get_wtime();
     //... vec1,vec2赋值
     PointForLocalmap = PointToAdd;
     PointForLocalmap.insert(PointForLocalmap.end(), PointNoNeedDownsample.begin(), PointNoNeedDownsample.end());
@@ -604,21 +609,29 @@ void map_incremental()
     box_needrm_window_buffer.push_back(box_needrm);
     // window incremental
     feats_window_buffer.push_back(PointForLocalmap);
-    std::cout << "PointToAddsize: " << PointToAdd.size() << " PointNoNeedDownsamplesize: " << PointNoNeedDownsample.size() << std::endl;
+    // std::cout << "PointToAddsize: " << PointToAdd.size() << " PointNoNeedDownsamplesize: " << PointNoNeedDownsample.size() << std::endl;
     if (feats_window_buffer.size() > FEATS_WINDOW_SIZE)
     {
         PointVector feats_needrm = feats_window_buffer.front();
         feats_window_buffer.pop_front();
         std::vector<BoxPointType> box_needrm = box_needrm_window_buffer.front();
         box_needrm_window_buffer.pop_front();
-        std::cout << "box_needrm size: " << box_needrm.size() << std::endl;
+        // std::cout << "box_needrm size: " << box_needrm.size() << std::endl;
         ikdtree_submap.Delete_Point_Boxes(box_needrm);
-
         ikdtree_submap.Delete_Points(feats_needrm);
     }
 
     add_point_size = ikdtree_submap.Add_Points(PointToAdd, true);
     ikdtree_submap.Add_Points(PointNoNeedDownsample, false);
+
+    // retrieve ikdtree submap
+    PointVector().swap(ikdtree_submap.PCL_Storage);
+    ikdtree_submap.flatten(ikdtree_submap.Root_Node, ikdtree_submap.PCL_Storage, NOT_RECORD);
+    featsSubMap->clear();
+    featsSubMap->points = ikdtree_submap.PCL_Storage;
+
+    double end_time = omp_get_wtime();
+    std::cout << "ikd-tree build submap time: " << end_time - start_time << std::endl;
 
     double st_time = omp_get_wtime();
     add_point_size = ikdtree.Add_Points(PointToAdd, true);
@@ -629,35 +642,78 @@ void map_incremental()
 
 /** the fuction where to add the rgb of point cloud **/
 PointCloudXYZI::Ptr pcl_wait_pub(new PointCloudXYZI(500000, 1));
-// PointCloudXYZI::Ptr pcl_wait_save(new PointCloudXYZI());
+PointCloudXYZI::Ptr pcl_wait_save(new PointCloudXYZI());
 PointCloudXYZRGB::Ptr pcl_wait_save_rgb(new PointCloudXYZRGB());
+PointCloudXYZI::Ptr pcl_submap(new PointCloudXYZI());
+pcl::ExtractIndices<PointType> extract;
+std::deque<int> inliers_end_vec;
+unsigned int window_start_idx, window_end_idx, total_size;
 
 void publish_frame_world(const ros::Publisher &pubLaserCloudFull)
 {
-    if (scan_pub_en)
+
+    PointCloudXYZI::Ptr laserCloudFullRes(dense_pub_en ? feats_undistort : feats_down_body); /** if dense_pub_enb true, use feats_undistort **/
+    int size = laserCloudFullRes->points.size();
+    // std::cout << "size of feats_undistort: " << size << std::endl;
+    // std::cout << "p_imu_process: " << &feats_undistort->points[0].x << " " << &feats_undistort->points[0].y << " " << &feats_undistort->points[0].z << std::endl;
+
+    PointCloudXYZI::Ptr laserCloudWorld(new PointCloudXYZI(size, 1));
+
+    // PointCloudXYZRGB::Ptr laserRgbCloudWorld(new PointCloudXYZRGB(size, 1));
+
+    for (int i = 0; i < size; i++)
     {
-        PointCloudXYZI::Ptr laserCloudFullRes(dense_pub_en ? feats_undistort : feats_down_body); /** if dense_pub_enb true, use feats_undistort **/
-        int size = laserCloudFullRes->points.size();
-        // std::cout << "size of feats_undistort: " << size << std::endl;
-        // std::cout << "p_imu_process: " << &feats_undistort->points[0].x << " " << &feats_undistort->points[0].y << " " << &feats_undistort->points[0].z << std::endl;
-
-        PointCloudXYZI::Ptr laserCloudWorld(new PointCloudXYZI(size, 1));
-
-        // PointCloudXYZRGB::Ptr laserRgbCloudWorld(new PointCloudXYZRGB(size, 1));
-
-        for (int i = 0; i < size; i++)
-        {
-            IntensitypointBodyToWorld(&laserCloudFullRes->points[i], &laserCloudWorld->points[i]); // 修改后才是XYZI
-            // RGBpointBodyToWorld(&laserCloudFullRes->points[i], &laserRgbCloudWorld->points[i]); // 转换出来是RGB，不是XYZI
-        }
-
-        sensor_msgs::PointCloud2 laserCloudmsg;
-        pcl::toROSMsg(*laserCloudWorld, laserCloudmsg);
-        laserCloudmsg.header.stamp = ros::Time().fromSec(lidar_end_time);
-        laserCloudmsg.header.frame_id = odom_frame;
-        pubLaserCloudFull.publish(laserCloudmsg);
-        publish_count -= PUBFRAME_PERIOD;
+        IntensitypointBodyToWorld(&laserCloudFullRes->points[i], &laserCloudWorld->points[i]); // 修改后才是XYZI
+        // RGBpointBodyToWorld(&laserCloudFullRes->points[i], &laserRgbCloudWorld->points[i]); // 转换出来是RGB，不是XYZI
     }
+
+    // 开始处理的时间
+    double start_time = omp_get_wtime();
+    // build submap using the sliding window
+    *pcl_wait_save += *laserCloudWorld;
+    *pcl_submap += *laserCloudWorld;
+    // this frame point indices: 0->size
+    total_size += size;
+    window_end_idx = total_size;
+    inliers_end_vec.push_back(total_size);
+    pcl::PointIndices::Ptr inliers(new pcl::PointIndices()); // 保存滑窗内所有应该有的indicies
+    if (inliers_end_vec.size() > FEATS_WINDOW_SIZE)
+    {
+        window_start_idx = inliers_end_vec.front();
+        inliers_end_vec.pop_front();
+        unsigned int window_idx_width = window_end_idx - window_start_idx;
+        inliers->indices.resize(window_idx_width);
+        // 从window_start_idx开始填充连续的整数
+        std::iota(inliers->indices.begin(), inliers->indices.end(), window_start_idx);
+        std::cout << "window_start_idx: " << window_start_idx << " window_idx_width " << window_idx_width << std::endl;
+    }
+    extract.setInputCloud(pcl_wait_save);
+    extract.setIndices(inliers);
+    extract.setNegative(false);
+    extract.filter(*pcl_submap);
+
+    double end_time = omp_get_wtime();
+    std::cout << "direct build submap time: " << end_time - start_time << std::endl;
+
+    //    static int scan_wait_num = 0;
+    //    scan_wait_num ++;
+    //    if (pcl_wait_save->size() > 0 && pcd_save_interval > 0  && scan_wait_num >= pcd_save_interval)
+    //    {
+    //        pcd_index ++;
+    //        string all_points_dir(string(string(ROOT_DIR) + "PCD/scans_") + to_string(pcd_index) + string(".pcd"));
+    //        pcl::PCDWriter pcd_writer;
+    //        cout << "current scan saved to /PCD/" << all_points_dir << endl;
+    //        pcd_writer.writeBinary(all_points_dir, *pcl_wait_save);
+    //        pcl_wait_save->clear();
+    //        scan_wait_num = 0;
+    //    }
+
+    // sensor_msgs::PointCloud2 laserCloudmsg;
+    // pcl::toROSMsg(*laserCloudWorld, laserCloudmsg);
+    // laserCloudmsg.header.stamp = ros::Time().fromSec(lidar_end_time);
+    // laserCloudmsg.header.frame_id = odom_frame;
+    // pubLaserCloudFull.publish(laserCloudmsg);
+    // publish_count -= PUBFRAME_PERIOD;
 
     /**************** save map ****************/
     /* 1. make sure you have enough memories
@@ -665,44 +721,34 @@ void publish_frame_world(const ros::Publisher &pubLaserCloudFull)
     if (pcd_save_en)
     {
         int size = feats_undistort->points.size();
-        //        PointCloudXYZI::Ptr laserCloudWorld( \
-//                        new PointCloudXYZI(size, 1));
-        PointCloudXYZRGB::Ptr laserRgbCloudWorld(new PointCloudXYZRGB(size, 1));
+        PointCloudXYZI::Ptr laserCloudWorld(
+            new PointCloudXYZI(size, 1));
+        // PointCloudXYZRGB::Ptr laserRgbCloudWorld(new PointCloudXYZRGB(size, 1));
 
         for (int i = 0; i < size; i++)
         {
-            //            IntensitypointBodyToWorld(&feats_undistort->points[i], \
-//                                &laserCloudWorld->points[i]);
-            RGBpointBodyToWorld(&feats_undistort->points[i],
-                                &laserRgbCloudWorld->points[i]);
+            IntensitypointBodyToWorld(&feats_undistort->points[i],
+                                      &laserCloudWorld->points[i]);
+            // RGBpointBodyToWorld(&feats_undistort->points[i],
+            //                     &laserRgbCloudWorld->points[i]);
         }
-        //        *pcl_wait_save += *laserCloudWorld;
-        //        static int scan_wait_num = 0;
-        //        scan_wait_num ++;
-        //        if (pcl_wait_save->size() > 0 && pcd_save_interval > 0  && scan_wait_num >= pcd_save_interval)
-        //        {
-        //            pcd_index ++;
-        //            string all_points_dir(string(string(ROOT_DIR) + "PCD/scans_") + to_string(pcd_index) + string(".pcd"));
-        //            pcl::PCDWriter pcd_writer;
-        //            cout << "current scan saved to /PCD/" << all_points_dir << endl;
-        //            pcd_writer.writeBinary(all_points_dir, *pcl_wait_save);
-        //            pcl_wait_save->clear();
-        //            scan_wait_num = 0;
-        //        }
 
-        *pcl_wait_save_rgb += *laserRgbCloudWorld;
-        static int scan_wait_num = 0;
-        scan_wait_num++;
-        if (pcl_wait_save_rgb->size() > 0 && pcd_save_interval > 0 && scan_wait_num >= pcd_save_interval)
-        {
-            pcd_index++;
-            string all_points_dir(string(string(ROOT_DIR) + "PCD/scans_") + to_string(pcd_index) + string(".pcd"));
-            pcl::PCDWriter pcd_writer;
-            cout << "current scan saved to /PCD/" << all_points_dir << endl;
-            pcd_writer.writeBinary(all_points_dir, *pcl_wait_save_rgb);
-            pcl_wait_save_rgb->clear();
-            scan_wait_num = 0;
-        }
+        *pcl_wait_save += *laserCloudWorld;
+        // *pcl_submap += *laserCloudWorld;
+
+        // *pcl_wait_save_rgb += *laserRgbCloudWorld;
+        // static int scan_wait_num = 0;
+        // scan_wait_num++;
+        // if (pcl_wait_save_rgb->size() > 0 && pcd_save_interval > 0 && scan_wait_num >= pcd_save_interval)
+        // {
+        //     pcd_index++;
+        //     string all_points_dir(string(string(ROOT_DIR) + "PCD/scans_") + to_string(pcd_index) + string(".pcd"));
+        //     pcl::PCDWriter pcd_writer;
+        //     cout << "current scan saved to /PCD/" << all_points_dir << endl;
+        //     pcd_writer.writeBinary(all_points_dir, *pcl_wait_save_rgb);
+        //     pcl_wait_save_rgb->clear();
+        //     scan_wait_num = 0;
+        // }
     }
 }
 
@@ -762,7 +808,8 @@ void publish_map(const ros::Publisher &pubLaserCloudMap)
 void publish_submap(const ros::Publisher &pubLaserSubMap)
 {
     sensor_msgs::PointCloud2 laserCloudMap;
-    pcl::toROSMsg(*featsSubMap, laserCloudMap);
+    // pcl::toROSMsg(*featsSubMap, laserCloudMap);
+    pcl::toROSMsg(*pcl_submap, laserCloudMap);
     laserCloudMap.header.stamp = ros::Time().fromSec(lidar_end_time);
     laserCloudMap.header.frame_id = odom_frame;
     pubLaserSubMap.publish(laserCloudMap);
@@ -1188,10 +1235,15 @@ int main(int argc, char **argv)
 
             if (1) // If you need to see map point, change to "if(1)"
             {
-                PointVector().swap(ikdtree_submap.PCL_Storage);
-                ikdtree_submap.flatten(ikdtree_submap.Root_Node, ikdtree_submap.PCL_Storage, NOT_RECORD);
-                featsSubMap->clear();
-                featsSubMap->points = ikdtree_submap.PCL_Storage;
+
+                // if detect in global map
+                if (featsFromMapNum > 0)
+                {
+                    featsFromMap->clear();
+                    featsFromMap->points.resize(featsFromMapNum);
+                    ikdtree.flatten(ikdtree.Root_Node, featsFromMap->points, NOT_RECORD);
+                    // cout << "featsFromMapNum: " << featsFromMapNum << endl;
+                }
             }
 
             pointSearchInd_surf.resize(feats_down_size);
@@ -1286,14 +1338,14 @@ int main(int argc, char **argv)
     /* 1. make sure you have enough memories
     /* 2. pcd save will largely influence the real-time performences **/
 
-    //    if (pcl_wait_save->size() > 0 && pcd_save_en)
-    //    {
-    //        string file_name = string("scans.pcd");
-    //        string all_points_dir(string(string(ROOT_DIR) + "PCD/") + file_name);
-    //        pcl::PCDWriter pcd_writer;
-    //        cout << "current scan saved to /PCD/" << file_name<<endl;
-    //        pcd_writer.writeBinary(all_points_dir, *pcl_wait_save);
-    //    }
+    if (pcl_wait_save->size() > 0 && pcd_save_en)
+    {
+        string file_name = string("scans.pcd");
+        string all_points_dir(string(string(ROOT_DIR) + "PCD/") + file_name);
+        pcl::PCDWriter pcd_writer;
+        cout << "current scan saved to /PCD/" << file_name << endl;
+        pcd_writer.writeBinary(all_points_dir, *pcl_wait_save);
+    }
 
     // if (pcl_wait_save_rgb->size() > 0 && pcd_save_en)
     // {

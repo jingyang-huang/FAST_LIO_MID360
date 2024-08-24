@@ -86,7 +86,7 @@ double kdtree_incremental_time = 0.0, kdtree_search_time = 0.0, kdtree_delete_ti
 double T1[MAXN], s_plot[MAXN], s_plot2[MAXN], s_plot3[MAXN], s_plot4[MAXN], s_plot5[MAXN], s_plot6[MAXN], s_plot7[MAXN], s_plot8[MAXN], s_plot9[MAXN], s_plot10[MAXN], s_plot11[MAXN];
 double match_time = 0, solve_time = 0, solve_const_H_time = 0;
 int kdtree_size_st = 0, kdtree_size_end = 0, add_point_size = 0, kdtree_delete_counter = 0;
-bool runtime_pos_log = false, pcd_save_en = false, time_sync_en = false, extrinsic_est_en = true, path_en = true;
+bool runtime_pos_log = false, pcd_save_en = false, time_sync_en = false, extrinsic_est_en = true, path_en = true, lins_save_en = false;
 /**************************/
 
 float res_last[100000] = {0.0};
@@ -102,7 +102,7 @@ string map_file_path, lid_topic, imu_topic, cloud_deskewed_topic, odometry_topic
 double res_mean_last = 0.05, total_residual = 0.0;
 double last_timestamp_lidar = 0, last_timestamp_imu = -1.0;
 double gyr_cov = 0.1, acc_cov = 0.1, b_gyr_cov = 0.0001, b_acc_cov = 0.0001;
-double filter_size_corner_min = 0, filter_size_surf_min = 0, filter_size_map_min = 0, fov_deg = 0;
+double filter_size_corner_min = 0, filter_size_surf_min = 0, filter_size_map_min = 0, filter_size_submap_min = 0, fov_deg = 0;
 double cube_len = 0, HALF_FOV_COS = 0, FOV_DEG = 0, total_distance = 0, lidar_end_time = 0, first_lidar_time = 0.0;
 int effct_feat_num = 0, time_log_counter = 0, scan_count = 0, publish_count = 0;
 int iterCount = 0, feats_down_size = 0, NUM_MAX_ITERATIONS = 0, laserCloudValidNum = 0, pcd_save_interval = -1, pcd_index = 0;
@@ -110,13 +110,15 @@ bool point_selected_surf[100000] = {0};
 bool lidar_pushed, flg_first_scan = true, flg_exit = false, flg_EKF_inited, deskew_enabled = true;
 bool scan_pub_en = false, dense_pub_en = false, scan_body_pub_en = false;
 double keyframe_dist = 1.0, keyframe_rot = 0.0, keyframe_time = 0.0;
-const int FEATS_WINDOW_SIZE = 30;
 
 vector<vector<int>> pointSearchInd_surf;
 vector<BoxPointType> cub_needrm;
 vector<PointVector> Nearest_Points;
 vector<double> extrinT(3, 0.0);
 vector<double> extrinR(9, 0.0);
+vector<double> lidar_to_body_T(3, 0.0);
+vector<double> lidar_to_body_R(9, 0.0);
+
 deque<double> time_buffer;
 deque<PointCloudXYZI::Ptr> lidar_buffer;
 deque<sensor_msgs::Imu::ConstPtr> imu_buffer;
@@ -136,6 +138,7 @@ PointCloudXYZI::Ptr _featsArray;
 
 pcl::VoxelGrid<PointType> downSizeFilterSurf;
 pcl::VoxelGrid<PointType> downSizeFilterMap;
+pcl::VoxelGrid<PointType> downSizeFilterSubMap; // submap使用的降采样
 
 KD_TREE<PointType> ikdtree;
 KD_TREE<PointType> ikdtree_submap;
@@ -144,13 +147,33 @@ V3F XAxisPoint_body(LIDAR_SP_LEN, 0.0, 0.0);
 V3F XAxisPoint_world(LIDAR_SP_LEN, 0.0, 0.0);
 V3D euler_cur;
 V3D position_last(Zero3d);
-V3D Lidar_T_wrt_IMU(Zero3d);
-M3D Lidar_R_wrt_IMU(Eye3d);
+V3D Lidar_T_wrt_IMU(Zero3d);  // T lidar to imu (imu = r * lidar + t)
+M3D Lidar_R_wrt_IMU(Eye3d);   // R lidar to imu (imu = r * lidar + t)
+V3D Lidar_T_wrt_BODY(Zero3d); // T lidar to body (body = r * lidar + t)
+M3D Lidar_R_wrt_BODY(Eye3d);  // R lidar to body (body = r * lidar + t)
+V3D IMU_T_wrt_BODY(Zero3d);   // T imu to body (body = r * imu + t)
+M3D IMU_R_wrt_BODY(Eye3d);    // R imu to body (body = r * imu + t)
+V3D BODY_T_wrt_IMU(Zero3d);   // T body to imu (imu = r * body + t)
+M3D BODY_R_wrt_IMU(Eye3d);    // R body to imu (imu = r * body + t)
+
+/*submap*/
+PointCloudXYZI::Ptr pcl_wait_pub(new PointCloudXYZI(500000, 1));
+PointCloudXYZRGB::Ptr pcl_wait_save_rgb(new PointCloudXYZRGB());
+PointCloudXYZI::Ptr pcl_wait_save(new PointCloudXYZI());
+PointCloudXYZI::Ptr pcl_submap(new PointCloudXYZI());
+// pcl::ExtractIndices<PointType> extract;
+// std::deque<int> inliers_end_vec;
+std::deque<PointCloudXYZI::Ptr> pcl_submap_vec;
+// unsigned int window_start_idx, window_end_idx, total_size;
+int FEATS_WINDOW_SIZE = 10;
+ofstream foutLINS;
 
 /*** EKF inputs and output ***/
 MeasureGroup Measures;
 esekfom::esekf<state_ikfom, 12, input_ikfom> kf;
 state_ikfom state_point;
+V3D state_pos_world_body;
+M3D state_rot_world_body;
 vect3 pos_lid;
 std::string LINS_RESULT_PATH;
 
@@ -161,6 +184,33 @@ geometry_msgs::PoseStamped msg_body_pose;
 
 shared_ptr<Preprocess> p_pre(new Preprocess());
 shared_ptr<ImuProcess> p_imu(new ImuProcess());
+
+// 将imu下的位姿转到body系下
+void getCurPose(state_ikfom cur_state)
+{
+    V3D state_pos(state_point.pos(0), state_point.pos(1), state_point.pos(2));
+    M3D state_rot = state_point.rot.toRotationMatrix();
+    V3D b0_T_ij = IMU_R_wrt_BODY * state_pos + IMU_T_wrt_BODY;
+    M3D b0_R_ij = IMU_R_wrt_BODY * state_rot;
+    state_pos_world_body = b0_R_ij * BODY_T_wrt_IMU + b0_T_ij;
+    state_rot_world_body = b0_R_ij * BODY_R_wrt_IMU;
+    // Eigen::Quaterniond q(state_rot_world_body);
+
+    //  欧拉角是没有群的性质，所以从SO3还是一般的rotation matrix 转换过来的结果一样
+    // Eigen::Vector3d eulerAngle = state_point.rot.toRotationMatrix().eulerAngles(2, 1, 0); //  yaw pitch roll  单位：弧度
+    // V3D eulerAngle  =  SO3ToEuler(cur_state.rot)/57.3 ;     //   fastlio 自带  roll pitch yaw  单位: 度，旋转顺序 zyx
+
+    // transformTobeMapped[0] = eulerAngle(0);                //  roll     使用 SO3ToEuler 方法时，顺序是 rpy
+    // transformTobeMapped[1] = eulerAngle(1);                //  pitch
+    // transformTobeMapped[2] = eulerAngle(2);                //  yaw
+
+    // transformTobeMapped[0] = eulerAngle(2); //  roll  使用 eulerAngles(2,1,0) 方法时，顺序是 ypr
+    // transformTobeMapped[1] = eulerAngle(1); //  pitch
+    // transformTobeMapped[2] = eulerAngle(0); //  yaw
+    // transformTobeMapped[3] = state_pos(0);  //  x
+    // transformTobeMapped[4] = state_pos(1);  //   y
+    // transformTobeMapped[5] = state_pos(2);  // z
+}
 
 void SigHandle(int sig)
 {
@@ -220,8 +270,9 @@ void pointBodyToWorld(const Matrix<T, 3, 1> &pi, Matrix<T, 3, 1> &po)
 
 void IntensitypointBodyToWorld(PointType const *const pi, PointType *const po)
 {
-    V3D p_body(pi->x, pi->y, pi->z);
-    V3D p_global(state_point.rot * (state_point.offset_R_L_I * p_body + state_point.offset_T_L_I) + state_point.pos);
+    V3D pt_imu(pi->x, pi->y, pi->z);
+    // V3D p_global(state_point.rot * (state_point.offset_R_L_I * p_body + state_point.offset_T_L_I) + state_point.pos);
+    V3D p_global(state_rot_world_body * (IMU_R_wrt_BODY * pt_imu + IMU_T_wrt_BODY) + state_pos_world_body);
 
     po->x = p_global(0);
     po->y = p_global(1);
@@ -641,21 +692,14 @@ void map_incremental()
 }
 
 /** the fuction where to add the rgb of point cloud **/
-PointCloudXYZI::Ptr pcl_wait_pub(new PointCloudXYZI(500000, 1));
-PointCloudXYZI::Ptr pcl_wait_save(new PointCloudXYZI());
-PointCloudXYZRGB::Ptr pcl_wait_save_rgb(new PointCloudXYZRGB());
-PointCloudXYZI::Ptr pcl_submap(new PointCloudXYZI());
-pcl::ExtractIndices<PointType> extract;
-std::deque<int> inliers_end_vec;
-unsigned int window_start_idx, window_end_idx, total_size;
 
 void publish_frame_world(const ros::Publisher &pubLaserCloudFull)
 {
 
+    downSizeFilterSubMap.setInputCloud(feats_undistort);
+
     PointCloudXYZI::Ptr laserCloudFullRes(dense_pub_en ? feats_undistort : feats_down_body); /** if dense_pub_enb true, use feats_undistort **/
     int size = laserCloudFullRes->points.size();
-    // std::cout << "size of feats_undistort: " << size << std::endl;
-    // std::cout << "p_imu_process: " << &feats_undistort->points[0].x << " " << &feats_undistort->points[0].y << " " << &feats_undistort->points[0].z << std::endl;
 
     PointCloudXYZI::Ptr laserCloudWorld(new PointCloudXYZI(size, 1));
 
@@ -668,32 +712,23 @@ void publish_frame_world(const ros::Publisher &pubLaserCloudFull)
     }
 
     // 开始处理的时间
-    double start_time = omp_get_wtime();
     // build submap using the sliding window
-    *pcl_wait_save += *laserCloudWorld; //这个的分辨率和surf有关，而kd_tree的和map_min有关
-    *pcl_submap += *laserCloudWorld;
-    // this frame point indices: 0->size
-    total_size += size;
-    window_end_idx = total_size;
-    inliers_end_vec.push_back(total_size);
-    pcl::PointIndices::Ptr inliers(new pcl::PointIndices()); // 保存滑窗内所有应该有的indicies
-    if (inliers_end_vec.size() > FEATS_WINDOW_SIZE)
+    pcl_submap.reset(new PointCloudXYZI());
+    double start_time = omp_get_wtime();
+    pcl_submap_vec.push_back(laserCloudWorld);
+    // build submap using the sliding window
+    if (pcl_submap_vec.size() > FEATS_WINDOW_SIZE)
     {
-        window_start_idx = inliers_end_vec.front();
-        inliers_end_vec.pop_front();
-        unsigned int window_idx_width = window_end_idx - window_start_idx;
-        inliers->indices.resize(window_idx_width);
-        // 从window_start_idx开始填充连续的整数
-        std::iota(inliers->indices.begin(), inliers->indices.end(), window_start_idx);
-        std::cout << "window_start_idx: " << window_start_idx << " window_idx_width " << window_idx_width << std::endl;
+        // PointCloudXYZI::Ptr p = pcl_submap_vec.front();
+        pcl_submap_vec.pop_front();
     }
-    extract.setInputCloud(pcl_wait_save);
-    extract.setIndices(inliers);
-    extract.setNegative(false);
-    extract.filter(*pcl_submap);
-
+    for (int i = 0; i < pcl_submap_vec.size(); i++)
+    {
+        *pcl_submap += *pcl_submap_vec[i];
+    }
+    std::cout << "pcl_submap_vec size: " << pcl_submap_vec.size() << " pcl_submap size: " << pcl_submap->size() << std::endl;
     double end_time = omp_get_wtime();
-    std::cout << "direct build submap time: " << end_time - start_time << std::endl;
+    std::cout << "incremental build submap time: " << end_time - start_time << std::endl;
 
     //    static int scan_wait_num = 0;
     //    scan_wait_num ++;
@@ -718,7 +753,7 @@ void publish_frame_world(const ros::Publisher &pubLaserCloudFull)
     /**************** save map ****************/
     /* 1. make sure you have enough memories
     /* 2. noted that pcd save will influence the real-time performences **/
-    if (pcd_save_en)
+    if (0) // pcd_save_en
     {
         int size = feats_undistort->points.size();
         PointCloudXYZI::Ptr laserCloudWorld(
@@ -808,7 +843,6 @@ void publish_map(const ros::Publisher &pubLaserCloudMap)
 void publish_submap(const ros::Publisher &pubLaserSubMap)
 {
     sensor_msgs::PointCloud2 laserCloudMap;
-    // pcl::toROSMsg(*featsSubMap, laserCloudMap);
     pcl::toROSMsg(*pcl_submap, laserCloudMap);
     laserCloudMap.header.stamp = ros::Time().fromSec(lidar_end_time);
     laserCloudMap.header.frame_id = odom_frame;
@@ -818,17 +852,17 @@ void publish_submap(const ros::Publisher &pubLaserSubMap)
 template <typename T>
 void set_posestamp(T &out)
 {
-    // cout << "-----set_posestamp-----" << endl;
-    out.pose.position.x = state_point.pos(0);
-    out.pose.position.y = state_point.pos(1);
-    out.pose.position.z = state_point.pos(2);
-    out.pose.orientation.x = geoQuat.x;
-    out.pose.orientation.y = geoQuat.y;
-    out.pose.orientation.z = geoQuat.z;
-    out.pose.orientation.w = geoQuat.w;
+    Eigen::Quaterniond q(state_rot_world_body);
+    out.pose.position.x = state_pos_world_body(0);
+    out.pose.position.y = state_pos_world_body(1);
+    out.pose.position.z = state_pos_world_body(2);
+    out.pose.orientation.x = q.x();
+    out.pose.orientation.y = q.y();
+    out.pose.orientation.z = q.z();
+    out.pose.orientation.w = q.w();
 }
 
-void publish_odometry(const ros::Publisher &pubOdomAftMapped, const ros::Publisher &pubKeyframePose)
+void publish_odometry(const ros::Publisher &pubOdomAftMapped)
 {
     // cout << "-----publish_odometry-----" << endl;
     odomAftMapped.header.frame_id = odom_frame;
@@ -850,26 +884,18 @@ void publish_odometry(const ros::Publisher &pubOdomAftMapped, const ros::Publish
     }
 
     // write result to file
-    ofstream foutC(LINS_RESULT_PATH, ios::app);
-    foutC.setf(ios::fixed, ios::floatfield);
-    foutC.precision(9);
-    foutC << odomAftMapped.header.stamp.toSec() << " ";
-    foutC.precision(6);
-    foutC << state_point.pos(0) << " " << state_point.pos(1) << " " << state_point.pos(2) << " ";
-    foutC << geoQuat.x << " " << geoQuat.y << " " << geoQuat.z << " " << geoQuat.w << endl;
-    foutC.close();
+    if (lins_save_en)
+    {
+        foutLINS.setf(ios::fixed, ios::floatfield);
+        foutLINS.precision(9);
+        foutLINS << odomAftMapped.header.stamp.toSec() << " ";
+        foutLINS.precision(6);
+        foutLINS << state_pos_world_body(0) << " " << state_pos_world_body(1) << " " << state_pos_world_body(2) << " ";
+        foutLINS << geoQuat.x << " " << geoQuat.y << " " << geoQuat.z << " " << geoQuat.w << endl;
+        foutLINS.close();
+    }
 
     // calc distance
-    double dist = sqrt(pow(odomAftMapped.pose.pose.position.x - LastKeyFrameOdom.pose.pose.position.x, 2) +
-                       pow(odomAftMapped.pose.pose.position.y - LastKeyFrameOdom.pose.pose.position.y, 2) +
-                       pow(odomAftMapped.pose.pose.position.z - LastKeyFrameOdom.pose.pose.position.z, 2));
-
-    if (dist > keyframe_dist)
-    {
-        std::cout << "keyframe_dist: " << keyframe_dist << std::endl;
-        pubKeyframePose.publish(odomAftMapped);
-        LastKeyFrameOdom = odomAftMapped;
-    }
 
     // if (pubKeyframePose.getNumSubscribers() > 0)
     // {
@@ -1037,6 +1063,7 @@ int main(int argc, char **argv)
     ros::NodeHandle nh;
 
     nh.param<bool>("publish/path_en", path_en, true);
+    nh.param<bool>("publish/lins_save_en", lins_save_en, false);
     nh.param<bool>("publish/scan_publish_en", scan_pub_en, true);
     nh.param<bool>("publish/dense_publish_en", dense_pub_en, true);
     nh.param<bool>("publish/scan_bodyframe_pub_en", scan_body_pub_en, true);
@@ -1053,6 +1080,7 @@ int main(int argc, char **argv)
     nh.param<double>("filter_size_corner", filter_size_corner_min, 0.5);
     nh.param<double>("filter_size_surf", filter_size_surf_min, 0.5);
     nh.param<double>("filter_size_map", filter_size_map_min, 0.5);
+    nh.param<double>("filter_size_submap", filter_size_submap_min, 0.01);
     nh.param<double>("cube_side_length", cube_len, 200);
     nh.param<float>("mapping/det_range", DET_RANGE, 300.f);
     nh.param<double>("mapping/fov_degree", fov_deg, 180);
@@ -1074,11 +1102,14 @@ int main(int argc, char **argv)
     nh.param<int>("pcd_save/interval", pcd_save_interval, -1);
     nh.param<vector<double>>("mapping/extrinsic_T", extrinT, vector<double>());
     nh.param<vector<double>>("mapping/extrinsic_R", extrinR, vector<double>());
+    nh.param<vector<double>>("mapping/lidar_to_body_T", lidar_to_body_T, vector<double>());
+    nh.param<vector<double>>("mapping/lidar_to_body_R", lidar_to_body_R, vector<double>());
     cout << "p_pre->lidar_type " << p_pre->lidar_type << endl;
+    cout << "LINS_RESULT_PATH " << LINS_RESULT_PATH << endl;
+
     cout << "deskew_enabled " << deskew_enabled << endl;
     cout << "feature_extract_enable " << p_pre->feature_enabled << endl;
     cout << "point_filter_num " << p_pre->point_filter_num << endl;
-    cout << "LINS_RESULT_PATH " << LINS_RESULT_PATH << endl;
     path.header.stamp = ros::Time::now();
     path.header.frame_id = odom_frame;
 
@@ -1099,11 +1130,26 @@ int main(int argc, char **argv)
     memset(res_last, -1000.0f, sizeof(res_last));
     downSizeFilterSurf.setLeafSize(filter_size_surf_min, filter_size_surf_min, filter_size_surf_min); // 这个是定位的时候用的
     downSizeFilterMap.setLeafSize(filter_size_map_min, filter_size_map_min, filter_size_map_min);     // 好像没什么用
+    downSizeFilterSubMap.setLeafSize(filter_size_submap_min, filter_size_submap_min, filter_size_submap_min);
+
     memset(point_selected_surf, true, sizeof(point_selected_surf));
     memset(res_last, -1000.0f, sizeof(res_last));
 
+    // 设置imu和lidar外参和imu参数等
     Lidar_T_wrt_IMU << VEC_FROM_ARRAY(extrinT);
     Lidar_R_wrt_IMU << MAT_FROM_ARRAY(extrinR);
+    Lidar_T_wrt_BODY << VEC_FROM_ARRAY(lidar_to_body_T);
+    Lidar_R_wrt_BODY << MAT_FROM_ARRAY(lidar_to_body_R);
+    IMU_T_wrt_BODY << -Lidar_R_wrt_BODY * Lidar_R_wrt_IMU.transpose() * Lidar_T_wrt_IMU + Lidar_T_wrt_BODY;
+    IMU_R_wrt_BODY << Lidar_R_wrt_BODY * Lidar_R_wrt_IMU.transpose();
+    BODY_T_wrt_IMU << -IMU_R_wrt_BODY.transpose() * IMU_T_wrt_BODY;
+    BODY_R_wrt_IMU << IMU_R_wrt_BODY.transpose();
+    std::cout << " IMU_T_wrt_BODY " << IMU_T_wrt_BODY.transpose() << std::endl;
+    std::cout << " IMU_R_wrt_BODY " << std::endl
+              << IMU_R_wrt_BODY << std::endl;
+    std::cout << " BODY_T_wrt_IMU " << BODY_T_wrt_IMU.transpose() << std::endl;
+    std::cout << " BODY_R_wrt_IMU " << std::endl
+              << BODY_R_wrt_IMU << std::endl;
     // p_imu->set_deskew(deskew_enabled);
     p_imu->set_extrinsic(Lidar_T_wrt_IMU, Lidar_R_wrt_IMU);
     p_imu->set_gyr_cov(V3D(gyr_cov, gyr_cov, gyr_cov));
@@ -1116,6 +1162,10 @@ int main(int argc, char **argv)
     kf.init_dyn_share(get_f, df_dx, df_dw, h_share_model, NUM_MAX_ITERATIONS, epsi);
 
     /*** debug record ***/
+    foutLINS.open(LINS_RESULT_PATH, ios::out);
+    foutLINS.close();
+    foutLINS.open(LINS_RESULT_PATH, ios::app);
+
     FILE *fp;
     string pos_log_dir = root_dir + "/Log/pos_log.txt";
     fp = fopen(pos_log_dir.c_str(), "w");
@@ -1201,16 +1251,12 @@ int main(int argc, char **argv)
                 if (feats_down_size > 5)
                 {
                     ikdtree.set_downsample_param(filter_size_map_min);
-                    ikdtree_submap.set_downsample_param(filter_size_map_min); // submap指定0.1更细致
                     feats_down_world->resize(feats_down_size);
                     for (int i = 0; i < feats_down_size; i++)
                     {
                         pointBodyToWorld(&(feats_down_body->points[i]), &(feats_down_world->points[i]));
                     }
-                    feats_window_buffer.push_back(feats_down_world->points); // 后面buffer满了还是要去掉
-
                     ikdtree.Build(feats_down_world->points);
-                    ikdtree_submap.Build(feats_down_world->points);
                 }
                 continue;
             }
@@ -1233,19 +1279,6 @@ int main(int argc, char **argv)
             fout_pre << setw(20) << Measures.lidar_beg_time - first_lidar_time << " " << euler_cur.transpose() << " " << state_point.pos.transpose() << " " << ext_euler.transpose() << " " << state_point.offset_T_L_I.transpose() << " " << state_point.vel.transpose()
                      << " " << state_point.bg.transpose() << " " << state_point.ba.transpose() << " " << state_point.grav << endl;
 
-            if (1) // If you need to see map point, change to "if(1)"
-            {
-
-                // if detect in global map
-                if (featsFromMapNum > 0)
-                {
-                    featsFromMap->clear();
-                    featsFromMap->points.resize(featsFromMapNum);
-                    ikdtree.flatten(ikdtree.Root_Node, featsFromMap->points, NOT_RECORD);
-                    // cout << "featsFromMapNum: " << featsFromMapNum << endl;
-                }
-            }
-
             pointSearchInd_surf.resize(feats_down_size);
             Nearest_Points.resize(feats_down_size);
             int rematch_num = 0;
@@ -1267,8 +1300,9 @@ int main(int argc, char **argv)
 
             double t_update_end = omp_get_wtime();
 
+            getCurPose(state_point);
             /******* Publish odometry *******/
-            publish_odometry(pubOdomAftMapped, pubKeyframePose);
+            publish_odometry(pubOdomAftMapped);
 
             /*** add the feature points to map kdtree ***/
             t3 = omp_get_wtime();
@@ -1290,14 +1324,19 @@ int main(int argc, char **argv)
                     cout << "path_pose:" << msg_body_pose.pose.orientation.x << endl;
                 }
             }
-            if (scan_pub_en || pcd_save_en)
-                publish_frame_world(pubLaserCloudFull);
+            if (scan_pub_en) // || pcd_save_en
+            {
+                // std::cout << " publish_frame_world " << std::endl;
+                publish_frame_world(pubLaserCloudFull); //   发布world系下的点云
+                publish_submap(pubLaserSubMap);         //   发布局部地图
+                // publish_undistort(pubLaserUndistort);   //   发布畸变纠正后的点云
+            }
+
             if (scan_pub_en && scan_body_pub_en)
                 publish_frame_body(pubLaserCloudFull_body);
             // publish_effect_world(pubLaserCloudEffect);
             // publish_deskew_local(pubLaserCloudDeskew);
             // publish_map(pubLaserCloudMap);
-            publish_submap(pubLaserSubMap);
 
             /*** Debug variables ***/
             if (runtime_pos_log)
@@ -1338,14 +1377,14 @@ int main(int argc, char **argv)
     /* 1. make sure you have enough memories
     /* 2. pcd save will largely influence the real-time performences **/
 
-    if (pcl_wait_save->size() > 0 && pcd_save_en)
-    {
-        string file_name = string("scans.pcd");
-        string all_points_dir(string(string(ROOT_DIR) + "PCD/") + file_name);
-        pcl::PCDWriter pcd_writer;
-        cout << "current scan saved to /PCD/" << file_name << endl;
-        pcd_writer.writeBinary(all_points_dir, *pcl_wait_save);
-    }
+    // if (pcl_wait_save->size() > 0 && pcd_save_en)
+    // {
+    //     string file_name = string("scans.pcd");
+    //     string all_points_dir(string(string(ROOT_DIR) + "PCD/") + file_name);
+    //     pcl::PCDWriter pcd_writer;
+    //     cout << "current scan saved to /PCD/" << file_name << endl;
+    //     pcd_writer.writeBinary(all_points_dir, *pcl_wait_save);
+    // }
 
     // if (pcl_wait_save_rgb->size() > 0 && pcd_save_en)
     // {
@@ -1355,8 +1394,8 @@ int main(int argc, char **argv)
     //     cout << "current scan saved to /PCD/" << file_name << endl;
     //     pcd_writer.writeBinary(all_points_dir, *pcl_wait_save_rgb);
     // }
-
-    if (1)
+    foutLINS.close();
+    if (0)
     {
         // 最后保存一次global map
         PointVector().swap(ikdtree.PCL_Storage);

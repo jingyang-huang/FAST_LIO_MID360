@@ -1,0 +1,12 @@
+{
+    "python.autoComplete.extraPaths": [
+        "/home/ubuntu/Desktop/OmniMatch_ws/devel/lib/python3/dist-packages",
+        "/opt/ros/noetic/lib/python3/dist-packages",
+        "/home/ubuntu/Desktop/calib_ws/src/SuperGluePretrainedNetwork"
+    ],
+    "python.analysis.extraPaths": [
+        "/home/ubuntu/Desktop/OmniMatch_ws/devel/lib/python3/dist-packages",
+        "/opt/ros/noetic/lib/python3/dist-packages",
+        "/home/ubuntu/Desktop/calib_ws/src/SuperGluePretrainedNetwork"
+    ]
+}

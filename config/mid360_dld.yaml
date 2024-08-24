@@ -1,0 +1,42 @@
+common:
+    lid_topic:  "livox/lidar"
+    imu_topic:  "livox/imu"
+    odom_frame:  "world"
+    body_frame:  "lidar_link"
+    time_sync_en: false         # ONLY turn on when external time synchronization is really not possible
+
+preprocess:
+    lidar_type: 1                # 1 for Livox serials LiDAR, 2 for Velodyne LiDAR, 3 for ouster LiDAR, 
+    scan_line: 4
+    blind: 1
+
+mapping:
+    acc_cov: 0.1
+    gyr_cov: 0.1
+    b_acc_cov: 0.0001
+    b_gyr_cov: 0.0001
+    fov_degree:    60
+    det_range:     100.0
+    extrinsic_est_en:  false      # true: enable the online estimation of IMU-LiDAR extrinsic
+    extrinsic_T: [ -0.011, -0.0234, 0.044 ]
+    extrinsic_R: [ 0.9999161, 0.0026676,  0.0126707,
+                   -0.0025826, 0.9999741, -0.0067201,
+                   -0.0126883, 0.0066868,  0.9998971]
+    lidar_to_body_T: [ 0.002701 , 0.002949 , 0.083410] # lidar_to_body_R: [ 0, 0.9659258, 0.2588190, # -1, 0, 0, # 0, -0.2588190, 0.9659258] 
+    lidar_to_body_R: [0.969227, 0.0 , 0.240728, 0.0, 1.0, 0.0 , -0.243866, 0.0, 0.967469]
+
+publish:
+    path_en:  true
+    scan_publish_en:  true       # false: close all the point cloud output
+    dense_publish_en: false       # false: low down the points number in a global-frame point clouds scan.
+    scan_bodyframe_pub_en: false  # true: output the point cloud scans in IMU-body-frame
+    lins_save_en: true
+    lins_result_path: "/home/ubuntu/Desktop/loop_output/ttttt.txt"
+pcd_save:
+    pcd_save_en: false
+    interval: -1                 # how many LiDAR frames saved in each pcd file; 
+                                 # -1 : all frames will be saved in ONE pcd file, may lead to memory crash when having too much frames.
+
+# Export settings
+savePCD: false                         # https://github.com/TixiaoShan/LIO-SAM/issues/3
+savePCDDirectory: "/Downloads/LOAM2/"        # in your home folder, starts and ends with "/". Warning: the code deletes "LOAM" folder then recreates it. See "mapOptimization" for implementation

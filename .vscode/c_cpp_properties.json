@@ -1,0 +1,31 @@
+{
+  "configurations": [
+    {
+      "browse": {
+        "databaseFilename": "${default}",
+        "limitSymbolsToIncludedHeaders": false
+      },
+      "includePath": [
+        "/home/ubuntu/Desktop/OmniMatch_ws/devel/include/**",
+        "/opt/ros/noetic/include/**",
+        "/home/ubuntu/Desktop/OmniMatch_ws/src/AirSLAM/include/**",
+        "/home/ubuntu/Desktop/OmniMatch_ws/src/LOOP-Fusion/camera_models/include/**",
+        "/home/ubuntu/Desktop/OmniMatch_ws/src/fast_gicp/include/**",
+        "/home/ubuntu/Desktop/OmniMatch_ws/src/FAST_LIO_SAM/include/**",
+        "/home/ubuntu/Desktop/OmniMatch_ws/src/LIO-Lite/src/LIO-Lite/include/**",
+        "/home/ubuntu/Desktop/OmniMatch_ws/src/Pangolin/include/**",
+        "/home/ubuntu/Desktop/OmniMatch_ws/src/ros_python_pkg-main/include/**",
+        "/home/ubuntu/Desktop/OmniMatch_ws/src/UAVloc/uavloc_ros/include/**",
+        "/home/ubuntu/Desktop/OmniMatch_ws/src/rpg_vikit/vikit_common/include/**",
+        "/home/ubuntu/Desktop/OmniMatch_ws/src/rpg_vikit/vikit_ros/include/**",
+        "/usr/include/**"
+      ],
+      "name": "ROS",
+      "intelliSenseMode": "gcc-x64",
+      "compilerPath": "/usr/bin/gcc",
+      "cStandard": "gnu11",
+      "cppStandard": "c++14"
+    }
+  ],
+  "version": 4
+}

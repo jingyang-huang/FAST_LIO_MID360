@@ -1192,7 +1192,7 @@ int main(int argc, char **argv)
     ros::Publisher pubLaserCloudDeskew = nh.advertise<sensor_msgs::PointCloud2>(cloud_deskewed_topic, 100000);
     ros::Publisher pubLaserCloudMap = nh.advertise<sensor_msgs::PointCloud2>("mapping/Laser_map", 100000);
     ros::Publisher pubLaserSubMap = nh.advertise<sensor_msgs::PointCloud2>("mapping/Local_map", 100000);
-    ros::Publisher pubOdomAftMapped = nh.advertise<nav_msgs::Odometry>(odometry_topic, 100000);
+    ros::Publisher pubOdomAftMapped = nh.advertise<nav_msgs::Odometry>("mapping/Odometry", 100000);
     ros::Publisher pubKeyframePose = nh.advertise<nav_msgs::Odometry>("mapping/keyframe_pose", 100000);
 
     ros::Publisher pubPath = nh.advertise<nav_msgs::Path>("mapping/path", 100000);

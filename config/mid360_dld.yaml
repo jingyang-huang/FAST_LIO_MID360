@@ -31,7 +31,7 @@ publish:
     dense_publish_en: false       # false: low down the points number in a global-frame point clouds scan.
     scan_bodyframe_pub_en: false  # true: output the point cloud scans in IMU-body-frame
     lins_save_en: true
-    lins_result_path: "/home/ubuntu/Desktop/loop_output/ttttt.txt"
+    lins_result_path: "/home//heron//Desktop/loop_output/ref4_gt.txt"
 pcd_save:
     pcd_save_en: false
     interval: -1                 # how many LiDAR frames saved in each pcd file; 

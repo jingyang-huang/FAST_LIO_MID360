@@ -205,6 +205,7 @@ void ImuProcess::IMU_init(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 
   }
   state_ikfom init_state = kf_state.get_x();                  //在esekfom.hpp获得x_的状态
   init_state.grav = S2(-mean_acc / mean_acc.norm() * G_m_s2); //从common_lib.h中拿到重力，并与加速度测量均值的单位重力求出SO2的旋转矩阵类型的重力加速度
+  std::cout<<" mean_acc.norm() " << mean_acc.norm()<< " mean_acc " << mean_acc.transpose() << " mean_gyr " << mean_gyr.transpose() << " grav " << init_state.grav << std::endl;
 
   // state_inout.rot = Eye3d; // Exp(mean_acc.cross(V3D(0, 0, -1 / scale_gravity)));
   init_state.bg = mean_gyr;                  //角速度测量作为陀螺仪偏差

@@ -26,6 +26,9 @@ mapping:
     lidar_to_body_R: [ 0,  0.9659258,  0.2588190,    
                    -1,          0,          0,     
                     0, -0.2588190,  0.9659258]
+    # lidar_to_body_R: [ 1,  0.,  0.,    
+    #                     0, 1,  0,     
+    #                     0, -0.,  1.]
 
 publish:
     path_en:  true
